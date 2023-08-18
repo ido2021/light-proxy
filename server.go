@@ -67,7 +67,13 @@ func (s *Server) Start(network, addr string) error {
 	if err != nil {
 		return err
 	}
-	return s.Serve(l)
+	go func() {
+		err = s.Serve(l)
+		if err != nil {
+			log.Println("proxy server termination：", err)
+		}
+	}()
+	return nil
 }
 
 // Serve is used to serve connections from a listener
