@@ -51,6 +51,7 @@ func (a AddrSpec) Address() string {
 
 // A Request represents request received by a server
 type Request struct {
+	Ctx context.Context
 	// Protocol
 	Protocol uint8
 	//// Requested command

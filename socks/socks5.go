@@ -64,8 +64,7 @@ func (s5 *Socks5) Handshake(ctx context.Context, conn net.Conn) (*common.Request
 	if _, err := io.ReadFull(conn, header[:3]); err != nil {
 		return nil, err
 	}
-	cmd := header[:1]
-	context.WithValue(ctx, "SOCKS_COMMAND", cmd)
+	ctx = context.WithValue(ctx, "SOCKS_COMMAND", header[1])
 
 	// Read in the destination address
 	dest, err := readAddrSpec(conn)
@@ -92,6 +91,7 @@ func (s5 *Socks5) Handshake(ctx context.Context, conn net.Conn) (*common.Request
 		DestAddr:    dest,
 		Conn:        conn,
 		AuthContext: authContext,
+		Ctx:         ctx,
 	}
 	if client, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
 		request.RemoteAddr = &common.AddrSpec{IP: client.IP, Port: client.Port}
@@ -128,7 +128,8 @@ func (s5 *Socks5) authenticate(rw net.Conn) (*common.AuthContext, error) {
 }
 
 // HandleRequest is used for request processing after authentication
-func (s5 *Socks5) HandleRequest(ctx context.Context, req *common.Request, transport common.Transport) error {
+func (s5 *Socks5) HandleRequest(req *common.Request, transport common.Transport) error {
+	ctx := req.Ctx
 	// Resolve the address if we have a FQDN
 	dest := req.DestAddr
 	if dest.FQDN != "" {
