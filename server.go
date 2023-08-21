@@ -2,17 +2,17 @@ package mixedproxy
 
 import (
 	"context"
-	"github.com/getlantern/sysproxy"
 	"github.com/ido2021/mixedproxy/common"
 	"github.com/ido2021/mixedproxy/socks"
+	"github.com/wzshiming/sysproxy"
 	"log"
 	"net"
 	"os"
 )
 
 func init() {
-	helperFullPath := "sysproxy-cmd"
-	_ = sysproxy.EnsureHelperToolPresent(helperFullPath, "检查代理工具是否存在", "")
+	//helperFullPath := "sysproxy-cmd"
+	//_ = sysproxy.EnsureHelperToolPresent(helperFullPath, "检查代理工具是否存在", "")
 }
 
 // Server is responsible for accepting connections and handling
@@ -157,15 +157,11 @@ func (s *Server) Stop() error {
 // SysProxy 开启/关闭系统代理
 func (s *Server) SysProxy(turnOn bool) {
 	if turnOn {
-		clearSysProxy, err := sysproxy.On(s.listener.Addr().String())
+		err := sysproxy.OnHTTP(s.listener.Addr().String())
 		if err != nil {
 			log.Println(err)
-		} else {
-			s.clearSysProxy = clearSysProxy
 		}
 	} else {
-		if s.clearSysProxy != nil {
-			_ = s.clearSysProxy()
-		}
+		_ = sysproxy.OffHTTP()
 	}
 }
