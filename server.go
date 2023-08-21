@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func init() {
@@ -18,12 +20,11 @@ func init() {
 // Server is responsible for accepting connections and handling
 // the details of the SOCKS5 & http protocol
 type Server struct {
-	config        *Config
-	listener      net.Listener
-	running       bool
-	transport     common.Transport
-	socks5        *socks.Socks5
-	clearSysProxy func() error
+	config    *Config
+	listener  net.Listener
+	running   bool
+	transport common.Transport
+	socks5    *socks.Socks5
 }
 
 // New creates a new Server and potentially returns an error
@@ -72,6 +73,7 @@ func New(transport common.Transport, options ...Option) *Server {
 
 // ListenAndServe is used to create a listener and serve on it
 func (s *Server) ListenAndServe(network, addr string) error {
+	s.watchSignal()
 	l, err := net.Listen(network, addr)
 	if err != nil {
 		return err
@@ -87,6 +89,22 @@ func (s *Server) ListenAndServe(network, addr string) error {
 	// 根据配置决定是否开启代理
 	s.SysProxy(s.config.SysProxy)
 	return nil
+}
+
+// 监听退出信号
+func (s *Server) watchSignal() {
+	c := make(chan os.Signal)
+	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		select {
+		case sig := <-c:
+			{
+				log.Printf("Got %s signal. Aborting...\n", sig)
+				s.Stop()
+				os.Exit(0)
+			}
+		}
+	}()
 }
 
 // serve is used to serve connections from a listener
