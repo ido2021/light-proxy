@@ -100,7 +100,6 @@ func (s *Server) Serve(l net.Listener) error {
 // ServeConn is used to serve a single connection.
 func (s *Server) handleConn(conn net.Conn) error {
 	defer conn.Close()
-	ctx := context.Background()
 	bufConn := NewBufferedConn(conn)
 
 	// Read the version byte
@@ -115,7 +114,7 @@ func (s *Server) handleConn(conn net.Conn) error {
 	switch version[0] {
 	case socks.Socks4Version:
 	case socks.Socks5Version:
-		request, err = s.socks5.Handshake(ctx, bufConn)
+		request, err = s.socks5.Handshake(context.Background(), bufConn)
 	default:
 		return err
 	}
@@ -133,7 +132,7 @@ func (s *Server) handleConn(conn net.Conn) error {
 	case socks.Socks4Version:
 	case socks.Socks5Version:
 		// Process the client request
-		return s.socks5.HandleRequest(ctx, request, s.transport)
+		return s.socks5.HandleRequest(request, s.transport)
 	default:
 
 	}
