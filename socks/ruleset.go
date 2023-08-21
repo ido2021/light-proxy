@@ -1,12 +1,13 @@
-package mixedproxy
+package socks
 
 import (
 	"context"
+	"github.com/ido2021/mixedproxy/common"
 )
 
 // RuleSet is used to provide custom rules to allow or prohibit actions
 type RuleSet interface {
-	Allow(ctx context.Context, req *Request) bool
+	Allow(ctx context.Context, req *common.Request) bool
 }
 
 // PermitAll returns a RuleSet which allows all types of connections
@@ -27,15 +28,15 @@ type PermitCommand struct {
 	EnableAssociate bool
 }
 
-func (p *PermitCommand) Allow(ctx context.Context, req *Request) bool {
-	switch req.Command {
-	case ConnectCommand:
-		return p.EnableConnect
-	case BindCommand:
-		return p.EnableBind
-	case AssociateCommand:
-		return p.EnableAssociate
-	}
+func (p *PermitCommand) Allow(ctx context.Context, req *common.Request) bool {
+	//switch req.Command {
+	//case ConnectCommand:
+	//	return p.EnableConnect
+	//case BindCommand:
+	//	return p.EnableBind
+	//case AssociateCommand:
+	//	return p.EnableAssociate
+	//}
 
 	return false
 }

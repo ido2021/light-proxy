@@ -1,4 +1,4 @@
-package mixedproxy
+package socks
 
 import (
 	"testing"

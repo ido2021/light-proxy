@@ -1,8 +1,9 @@
-package mixedproxy
+package socks
 
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/ido2021/mixedproxy"
 	"io"
 	"net"
 	"testing"
@@ -39,15 +40,15 @@ func TestSOCKS5_Connect(t *testing.T) {
 		"foo": "bar",
 	}
 	cator := UserPassAuthenticator{Credentials: creds}
-	option := WithAuthMethods([]Authenticator{cator})
-	serv := New(option)
+	option := mixedproxy.WithAuthMethods([]Authenticator{cator})
+	serv := mixedproxy.New(nil, option)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 
-	// Start listening
+	// ListenAndServe listening
 	go func() {
-		if err := serv.Start("tcp", "127.0.0.1:12365"); err != nil {
+		if err := serv.ListenAndServe("tcp", "127.0.0.1:12365"); err != nil {
 			t.Fatalf("err: %v", err)
 		}
 	}()
@@ -78,7 +79,7 @@ func TestSOCKS5_Connect(t *testing.T) {
 
 	// Verify response
 	expected := []byte{
-		socks5Version, UserPassAuth,
+		Socks5Version, UserPassAuth,
 		1, authSuccess,
 		5,
 		0,

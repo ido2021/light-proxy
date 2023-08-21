@@ -1,8 +1,9 @@
-package mixedproxy
+package socks
 
 import (
 	"errors"
 	"fmt"
+	"github.com/ido2021/mixedproxy/common"
 	"io"
 	"net"
 )
@@ -24,19 +25,8 @@ var (
 	UserAuthFailed  = errors.New("user authentication failed")
 )
 
-// AuthContext A Request encapsulates authentication state provided
-// during negotiation
-type AuthContext struct {
-	// Provided auth method
-	Method uint8
-	// Payload provided during negotiation.
-	// Keys depend on the used auth method.
-	// For UserPassauth contains Username
-	Payload map[string]string
-}
-
 type Authenticator interface {
-	Authenticate(conn net.Conn) (*AuthContext, error)
+	Authenticate(conn net.Conn) (*common.AuthContext, error)
 	GetCode() uint8
 }
 
@@ -47,9 +37,9 @@ func (a NoAuthAuthenticator) GetCode() uint8 {
 	return NoAuth
 }
 
-func (a NoAuthAuthenticator) Authenticate(conn net.Conn) (*AuthContext, error) {
-	_, err := conn.Write([]byte{socks5Version, NoAuth})
-	return &AuthContext{NoAuth, nil}, err
+func (a NoAuthAuthenticator) Authenticate(conn net.Conn) (*common.AuthContext, error) {
+	_, err := conn.Write([]byte{Socks5Version, NoAuth})
+	return &common.AuthContext{NoAuth, nil}, err
 }
 
 // UserPassAuthenticator is used to handle username/password based
@@ -62,9 +52,9 @@ func (a UserPassAuthenticator) GetCode() uint8 {
 	return UserPassAuth
 }
 
-func (a UserPassAuthenticator) Authenticate(conn net.Conn) (*AuthContext, error) {
+func (a UserPassAuthenticator) Authenticate(conn net.Conn) (*common.AuthContext, error) {
 	// Tell the client to use user/pass auth
-	if _, err := conn.Write([]byte{socks5Version, UserPassAuth}); err != nil {
+	if _, err := conn.Write([]byte{Socks5Version, UserPassAuth}); err != nil {
 		return nil, err
 	}
 
@@ -118,12 +108,12 @@ func (a UserPassAuthenticator) Authenticate(conn net.Conn) (*AuthContext, error)
 	}
 
 	// Done
-	return &AuthContext{UserPassAuth, map[string]string{"Username": user}}, nil
+	return &common.AuthContext{UserPassAuth, map[string]string{"Username": user}}, nil
 }
 
 // noAcceptableAuth is used to handle when we have no eligible
 // authentication mechanism
 func noAcceptableAuth(conn io.Writer) error {
-	conn.Write([]byte{socks5Version, noAcceptable})
+	conn.Write([]byte{Socks5Version, noAcceptable})
 	return NoSupportedAuth
 }

@@ -1,4 +1,4 @@
-package mixedproxy
+package socks
 
 // CredentialStore is used to support user/pass authentication
 type CredentialStore interface {

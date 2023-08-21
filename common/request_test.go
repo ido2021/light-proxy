@@ -1,4 +1,4 @@
-package mixedproxy
+package common
 
 //
 //import (

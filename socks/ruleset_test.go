@@ -1,6 +1,7 @@
-package mixedproxy
+package socks
 
 import (
+	"github.com/ido2021/mixedproxy/common"
 	"testing"
 
 	"context"
@@ -10,15 +11,15 @@ func TestPermitCommand(t *testing.T) {
 	ctx := context.Background()
 	r := &PermitCommand{true, false, false}
 
-	if r.Allow(ctx, &Request{Command: ConnectCommand}) {
+	if r.Allow(ctx, &common.Request{Command: common.ConnectCommand}) {
 		t.Fatalf("expect connect")
 	}
 
-	if r.Allow(ctx, &Request{Command: BindCommand}) {
+	if r.Allow(ctx, &common.Request{Command: common.BindCommand}) {
 		t.Fatalf("do not expect bind")
 	}
 
-	if r.Allow(ctx, &Request{Command: AssociateCommand}) {
+	if r.Allow(ctx, &common.Request{Command: common.AssociateCommand}) {
 		t.Fatalf("do not expect associate")
 	}
 }

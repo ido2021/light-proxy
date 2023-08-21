@@ -1,4 +1,4 @@
-package mixedproxy
+package common
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestDNSResolver(t *testing.T) {
-	d := &DNSResolver{}
+	d := &DirectTransport{}
 	ctx := context.Background()
 
 	addr, err := d.Resolve(ctx, "localhost")

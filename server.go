@@ -2,8 +2,8 @@ package mixedproxy
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/mixedproxy/socks"
 	"log"
 	"net"
 	"os"
@@ -12,26 +12,22 @@ import (
 // Server is responsible for accepting connections and handling
 // the details of the SOCKS5 & http protocol
 type Server struct {
-	config   *Config
-	listener net.Listener
-	closed   bool
-	socks5   *Socks5
+	config    *Config
+	listener  net.Listener
+	running   bool
+	transport common.Transport
+	socks5    *socks.Socks5
 }
 
 // New creates a new Server and potentially returns an error
-func New(options ...Option) *Server {
+func New(transport common.Transport, options ...Option) *Server {
 	conf := &Config{
 		AuthMethods: nil,
 		Credentials: nil,
-		Resolver:    &DNSResolver{},
 		Rules:       nil,
 		Rewriter:    nil,
 		BindIP:      nil,
-		// 缺省直连模式
-		DialOut: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return net.Dial(network, addr)
-		},
-		Logger: log.New(os.Stdout, "", log.LstdFlags),
+		Logger:      log.New(os.Stdout, "", log.LstdFlags),
 	}
 
 	for _, option := range options {
@@ -41,28 +37,34 @@ func New(options ...Option) *Server {
 	// Ensure we have at least one authentication method enabled
 	if len(conf.AuthMethods) == 0 {
 		if conf.Credentials != nil {
-			conf.AuthMethods = []Authenticator{&UserPassAuthenticator{conf.Credentials}}
+			conf.AuthMethods = []socks.Authenticator{&socks.UserPassAuthenticator{conf.Credentials}}
 		} else {
-			conf.AuthMethods = []Authenticator{&NoAuthAuthenticator{}}
+			conf.AuthMethods = []socks.Authenticator{&socks.NoAuthAuthenticator{}}
 		}
 	}
 
+	// 缺省直连模式
+	if transport == nil {
+		transport = new(common.DirectTransport)
+	}
+
 	server := &Server{
-		config: conf,
-		socks5: &Socks5{
-			authMethods: make(map[uint8]Authenticator),
+		config:    conf,
+		transport: transport,
+		socks5: &socks.Socks5{
+			AuthMethods: make(map[uint8]socks.Authenticator),
 		},
 	}
 
 	for _, a := range conf.AuthMethods {
-		server.socks5.authMethods[a.GetCode()] = a
+		server.socks5.AuthMethods[a.GetCode()] = a
 	}
 
 	return server
 }
 
-// Start is used to create a listener and serve on it
-func (s *Server) Start(network, addr string) error {
+// ListenAndServe is used to create a listener and serve on it
+func (s *Server) ListenAndServe(network, addr string) error {
 	l, err := net.Listen(network, addr)
 	if err != nil {
 		return err
@@ -79,10 +81,11 @@ func (s *Server) Start(network, addr string) error {
 // Serve is used to serve connections from a listener
 func (s *Server) Serve(l net.Listener) error {
 	s.listener = l
+	s.running = true
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			if s.closed {
+			if !s.running {
 				break
 			}
 			log.Println("连接异常：", err)
@@ -108,44 +111,29 @@ func (s *Server) handleConn(conn net.Conn) error {
 		return err
 	}
 
-	var request *Request
+	var request *common.Request
 	switch version[0] {
-	case socks4Version:
-	case socks5Version:
-		request, err = s.socks5.handshake(bufConn)
+	case socks.Socks4Version:
+	case socks.Socks5Version:
+		request, err = s.socks5.Handshake(ctx, bufConn)
 	default:
 		return err
 	}
-
 	if err != nil {
 		s.config.Logger.Printf("handshake failed: %v", err)
 		return err
 	}
 
-	for _, rule := range s.config.Rules {
-		// 不允许，直接断开连接
-		if !rule.Allow(ctx, request) {
-			return errors.New("rule not allowed")
-		}
-	}
-	// Resolve the address if we have a FQDN
-	dest := request.DestAddr
-	if dest.FQDN != "" {
-		addr, err := s.config.Resolver.Resolve(ctx, dest.FQDN)
-		if err != nil {
-			if err := sendReply(conn, hostUnreachable, nil); err != nil {
-				return fmt.Errorf("Failed to send reply: %v", err)
-			}
-			return fmt.Errorf("Failed to resolve destination '%v': %v", dest.FQDN, err)
-		}
-		dest.IP = addr
-	}
+	/*	// 匹配规则找到合适的transport
+		for _, rule := range s.config.Rules {
+			_ = rule
+		}*/
 
 	switch version[0] {
-	case socks4Version:
-	case socks5Version:
+	case socks.Socks4Version:
+	case socks.Socks5Version:
 		// Process the client request
-		return s.socks5.handleRequest(ctx, request, s.config.DialOut)
+		return s.socks5.HandleRequest(ctx, request, s.transport)
 	default:
 
 	}
@@ -153,6 +141,6 @@ func (s *Server) handleConn(conn net.Conn) error {
 }
 
 func (s *Server) Stop() error {
-	s.closed = true
+	s.running = false
 	return s.listener.Close()
 }

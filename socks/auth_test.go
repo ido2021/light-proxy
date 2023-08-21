@@ -1,14 +1,15 @@
-package mixedproxy
+package socks
 
 import (
 	"bytes"
+	"github.com/ido2021/mixedproxy"
 	"net"
 	"testing"
 )
 
 func TestNoAuth(t *testing.T) {
 	req, resp := net.Pipe()
-	s := New()
+	s := mixedproxy.New()
 	resp.Write([]byte{1, NoAuth})
 	ctx, err := s.socks5.authenticate(req)
 	if err != nil {
