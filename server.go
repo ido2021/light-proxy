@@ -2,6 +2,7 @@ package mixedproxy
 
 import (
 	"context"
+	"github.com/getlantern/sysproxy"
 	"github.com/ido2021/mixedproxy/common"
 	"github.com/ido2021/mixedproxy/socks"
 	"log"
@@ -9,14 +10,20 @@ import (
 	"os"
 )
 
+func init() {
+	helperFullPath := "sysproxy-cmd"
+	_ = sysproxy.EnsureHelperToolPresent(helperFullPath, "检查代理工具是否存在", "")
+}
+
 // Server is responsible for accepting connections and handling
 // the details of the SOCKS5 & http protocol
 type Server struct {
-	config    *Config
-	listener  net.Listener
-	running   bool
-	transport common.Transport
-	socks5    *socks.Socks5
+	config        *Config
+	listener      net.Listener
+	running       bool
+	transport     common.Transport
+	socks5        *socks.Socks5
+	clearSysProxy func() error
 }
 
 // New creates a new Server and potentially returns an error
@@ -69,19 +76,21 @@ func (s *Server) ListenAndServe(network, addr string) error {
 	if err != nil {
 		return err
 	}
+	s.listener = l
+	s.running = true
 	go func() {
-		err = s.Serve(l)
+		err = s.serve(l)
 		if err != nil {
 			log.Println("proxy server termination：", err)
 		}
 	}()
+	// 根据配置决定是否开启代理
+	s.SysProxy(s.config.SysProxy)
 	return nil
 }
 
-// Serve is used to serve connections from a listener
-func (s *Server) Serve(l net.Listener) error {
-	s.listener = l
-	s.running = true
+// serve is used to serve connections from a listener
+func (s *Server) serve(l net.Listener) error {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -141,5 +150,22 @@ func (s *Server) handleConn(conn net.Conn) error {
 
 func (s *Server) Stop() error {
 	s.running = false
+	s.SysProxy(false)
 	return s.listener.Close()
+}
+
+// SysProxy 开启/关闭系统代理
+func (s *Server) SysProxy(turnOn bool) {
+	if turnOn {
+		clearSysProxy, err := sysproxy.On(s.listener.Addr().String())
+		if err != nil {
+			log.Println(err)
+		} else {
+			s.clearSysProxy = clearSysProxy
+		}
+	} else {
+		if s.clearSysProxy != nil {
+			_ = s.clearSysProxy()
+		}
+	}
 }

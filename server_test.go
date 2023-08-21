@@ -12,6 +12,7 @@ func TestProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.SysProxy(true)
 	time.Sleep(5 * time.Minute)
 	server.Stop()
 }

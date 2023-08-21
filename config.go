@@ -9,6 +9,8 @@ import (
 
 // Config is used to setup and configure a Server
 type Config struct {
+	// 系统代理
+	SysProxy bool
 	// AuthMethods can be provided to implement custom authentication
 	// By default, "auth-less" mode is enabled.
 	// For password-based auth use UserPassAuthenticator.
