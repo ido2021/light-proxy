@@ -12,11 +12,6 @@ import (
 	"syscall"
 )
 
-func init() {
-	//helperFullPath := "sysproxy-cmd"
-	//_ = sysproxy.EnsureHelperToolPresent(helperFullPath, "检查代理工具是否存在", "")
-}
-
 // Server is responsible for accepting connections and handling
 // the details of the SOCKS5 & http protocol
 type Server struct {
