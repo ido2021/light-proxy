@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+type Protocol uint8
+
+const (
+	HTTP Protocol = iota
+	SOCKS4
+	SOCKS5
+)
+
 // AddressRewriter is used to rewrite a destination transparently
 type AddressRewriter interface {
 	Rewrite(ctx context.Context, request *Request) (context.Context, *AddrSpec)
@@ -51,9 +59,8 @@ func (a AddrSpec) Address() string {
 
 // A Request represents request received by a server
 type Request struct {
-	Ctx context.Context
 	// Protocol
-	Protocol uint8
+	Protocol Protocol
 	//// Requested command
 	//Command uint8
 	// AuthContext provided during negotiation
@@ -63,6 +70,7 @@ type Request struct {
 	// AddrSpec of the desired destination
 	DestAddr *AddrSpec
 	Conn     net.Conn
+	Metadata map[string]interface{}
 }
 
 //type conn interface {

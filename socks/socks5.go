@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/ido2021/mixedproxy/common"
 	"io"
+	"log"
 	"net"
 	"strings"
 )
@@ -43,13 +44,42 @@ var (
 	unrecognizedAddrType = errors.New("unrecognized address type")
 )
 
-type Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+func init() {
+	common.RegisterAdaptors(common.SOCKS5, &Socks5Adaptor{
+		AuthMethods: map[uint8]Authenticator{NoAuth: &NoAuthAuthenticator{}},
+	})
+}
 
-type Socks5 struct {
+type Socks5Adaptor struct {
 	AuthMethods map[uint8]Authenticator
 }
 
-func (s5 *Socks5) Handshake(ctx context.Context, conn net.Conn) (*common.Request, error) {
+func (s5 *Socks5Adaptor) HandleConn(ctx context.Context, conn net.Conn, router *common.Router) {
+	request, err := s5.receiveRequest(ctx, conn)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	transport := router.RouteBy(request)
+	// Resolve the address if we have a FQDN
+	dest := request.DestAddr
+	if dest.FQDN != "" && dest.IP == nil {
+		addr, err := transport.Resolve(ctx, dest.FQDN)
+		if err != nil {
+			_ = sendReply(conn, hostUnreachable, nil)
+			return
+		}
+		dest.IP = addr
+	}
+
+	err = s5.forwardRequest(ctx, request, transport.Dial)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (s5 *Socks5Adaptor) receiveRequest(ctx context.Context, conn net.Conn) (*common.Request, error) {
 	// Authenticate the connection
 	authContext, err := s5.authenticate(conn)
 	if err != nil {
@@ -63,7 +93,6 @@ func (s5 *Socks5) Handshake(ctx context.Context, conn net.Conn) (*common.Request
 	if _, err := io.ReadFull(conn, header[:3]); err != nil {
 		return nil, err
 	}
-	ctx = context.WithValue(ctx, "SOCKS_COMMAND", header[1])
 
 	// Read in the destination address
 	dest, err := readAddrSpec(conn)
@@ -90,7 +119,7 @@ func (s5 *Socks5) Handshake(ctx context.Context, conn net.Conn) (*common.Request
 		DestAddr:    dest,
 		Conn:        conn,
 		AuthContext: authContext,
-		Ctx:         ctx,
+		Metadata:    map[string]interface{}{"SOCKS5_COMMAND": header[1]},
 	}
 	if client, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
 		request.RemoteAddr = &common.AddrSpec{IP: client.IP, Port: client.Port}
@@ -101,7 +130,7 @@ func (s5 *Socks5) Handshake(ctx context.Context, conn net.Conn) (*common.Request
 }
 
 // authenticate is used to handle connection authentication
-func (s5 *Socks5) authenticate(rw net.Conn) (*common.AuthContext, error) {
+func (s5 *Socks5Adaptor) authenticate(rw net.Conn) (*common.AuthContext, error) {
 	// Read RFC 1928 for request and reply structure and sizes.
 	buf := make([]byte, MaxAddrLen)
 	// read VER, NMETHODS, METHODS
@@ -126,27 +155,13 @@ func (s5 *Socks5) authenticate(rw net.Conn) (*common.AuthContext, error) {
 	return nil, noAcceptableAuth(rw)
 }
 
-// HandleRequest is used for request processing after authentication
-func (s5 *Socks5) HandleRequest(req *common.Request, transport common.Transport) error {
-	ctx := req.Ctx
-	// Resolve the address if we have a FQDN
-	dest := req.DestAddr
-	if dest.FQDN != "" {
-		addr, err := transport.Resolve(ctx, dest.FQDN)
-		if err != nil {
-			if err := sendReply(req.Conn, hostUnreachable, nil); err != nil {
-				return fmt.Errorf("Failed to send reply: %v", err)
-			}
-			return fmt.Errorf("Failed to resolve destination '%v': %v", dest.FQDN, err)
-		}
-		dest.IP = addr
-	}
-
-	cmd := ctx.Value("SOCKS_COMMAND").(byte)
+// forwardRequest 转发请求
+func (s5 *Socks5Adaptor) forwardRequest(ctx context.Context, req *common.Request, dialOut common.DialOut) error {
+	cmd := req.Metadata["SOCKS5_COMMAND"].(byte)
 	// Switch on the command
 	switch cmd {
 	case ConnectCommand:
-		return s5.handleConnect(ctx, req, transport.Dial)
+		return s5.handleConnect(ctx, req, dialOut)
 	case BindCommand:
 		return s5.handleBind(ctx, req)
 	case AssociateCommand:
@@ -160,7 +175,7 @@ func (s5 *Socks5) HandleRequest(req *common.Request, transport common.Transport)
 }
 
 // handleConnect is used to handle a connect command
-func (s5 *Socks5) handleConnect(ctx context.Context, req *common.Request, dialOut Dial) error {
+func (s5 *Socks5Adaptor) handleConnect(ctx context.Context, req *common.Request, dialOut common.DialOut) error {
 	// Attempt to connect
 	target, err := dialOut(ctx, "tcp", req.DestAddr.Address())
 	if err != nil {
@@ -204,7 +219,7 @@ func (s5 *Socks5) handleConnect(ctx context.Context, req *common.Request, dialOu
 }
 
 // handleBind is used to handle a connect command
-func (s5 *Socks5) handleBind(ctx context.Context, req *common.Request) error {
+func (s5 *Socks5Adaptor) handleBind(ctx context.Context, req *common.Request) error {
 	// TODO: Support bind
 	if err := sendReply(req.Conn, commandNotSupported, nil); err != nil {
 		return fmt.Errorf("Failed to send reply: %v", err)
@@ -213,7 +228,7 @@ func (s5 *Socks5) handleBind(ctx context.Context, req *common.Request) error {
 }
 
 // handleAssociate is used to handle a connect command
-func (s5 *Socks5) handleAssociate(ctx context.Context, req *common.Request) error {
+func (s5 *Socks5Adaptor) handleAssociate(ctx context.Context, req *common.Request) error {
 	// TODO: Support associate
 	if err := sendReply(req.Conn, commandNotSupported, nil); err != nil {
 		return fmt.Errorf("Failed to send reply: %v", err)

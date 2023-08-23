@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/ido2021/mixedproxy/common"
 	"github.com/ido2021/mixedproxy/socks"
-	"github.com/wzshiming/sysproxy"
 	"log"
 	"net"
 	"os"
@@ -18,8 +17,10 @@ type Server struct {
 	config    *Config
 	listener  net.Listener
 	running   bool
+	signals   chan os.Signal
 	transport common.Transport
-	socks5    *socks.Socks5
+	socks5    *socks.Socks5Adaptor
+	router    *common.Router
 }
 
 // New creates a new Server and potentially returns an error
@@ -54,7 +55,8 @@ func New(transport common.Transport, options ...Option) *Server {
 	server := &Server{
 		config:    conf,
 		transport: transport,
-		socks5: &socks.Socks5{
+		signals:   make(chan os.Signal),
+		socks5: &socks.Socks5Adaptor{
 			AuthMethods: make(map[uint8]socks.Authenticator),
 		},
 	}
@@ -68,113 +70,86 @@ func New(transport common.Transport, options ...Option) *Server {
 
 // ListenAndServe is used to create a listener and serve on it
 func (s *Server) ListenAndServe(network, addr string) error {
-	s.watchSignal()
+	if s.running {
+		return nil
+	}
 	l, err := net.Listen(network, addr)
 	if err != nil {
 		return err
 	}
 	s.listener = l
 	s.running = true
-	go func() {
-		err = s.serve(l)
-		if err != nil {
-			log.Println("proxy server termination：", err)
-		}
-	}()
-	// 根据配置决定是否开启代理
-	s.SysProxy(s.config.SysProxy)
+
+	go s.serve(l)
+	s.waitOnExit()
 	return nil
 }
 
-// 监听退出信号
-func (s *Server) watchSignal() {
-	c := make(chan os.Signal)
-	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	go func() {
-		select {
-		case sig := <-c:
-			{
-				log.Printf("Got %s signal. Aborting...\n", sig)
-				s.Stop()
-				os.Exit(0)
-			}
-		}
-	}()
+func (s *Server) waitOnExit() {
+	signal.Notify(s.signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	sig, ok := <-s.signals
+	if ok {
+		log.Printf("Got %s signal. Aborting...\n", sig)
+		_ = s.Stop()
+	}
 }
 
 // serve is used to serve connections from a listener
-func (s *Server) serve(l net.Listener) error {
+func (s *Server) serve(l net.Listener) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			if !s.running {
 				break
 			}
-			log.Println("连接异常：", err)
-			//conn.Close()
+			log.Println("获取连接异常：", err)
 			continue
 		}
-		go s.handleConn(conn)
+		ctx := context.Background()
+		go s.handleConn(ctx, conn)
 	}
-	return nil
 }
 
 // ServeConn is used to serve a single connection.
-func (s *Server) handleConn(conn net.Conn) error {
-	defer conn.Close()
-	bufConn := NewBufferedConn(conn)
+func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
+	defer func() {
+		// 捕获Panic
+		if err := recover(); err != nil {
+			log.Println(err)
+		}
+		_ = conn.Close()
+	}()
 
+	conn.(*net.TCPConn).SetKeepAlive(true)
+
+	bufConn := common.NewBufferedConn(conn)
 	// Read the version byte
-	var version []byte
-	var err error
-	if version, err = bufConn.Peek(1); err != nil {
-		s.config.Logger.Printf("[ERR] socks: Failed to get version byte: %v", err)
-		return err
-	}
-
-	var request *common.Request
-	switch version[0] {
-	case socks.Socks4Version:
-	case socks.Socks5Version:
-		request, err = s.socks5.Handshake(context.Background(), bufConn)
-	default:
-		return err
-	}
+	version, err := bufConn.Peek(1)
 	if err != nil {
-		s.config.Logger.Printf("handshake failed: %v", err)
-		return err
+		s.config.Logger.Printf("[ERR] socks: Failed to get version byte: %v", err)
+		return
 	}
 
-	/*	// 匹配规则找到合适的transport
-		for _, rule := range s.config.Rules {
-			_ = rule
-		}*/
-
+	var adaptor common.Adaptor
 	switch version[0] {
 	case socks.Socks4Version:
+		adaptor = common.GetAdaptor(common.SOCKS4)
 	case socks.Socks5Version:
-		// Process the client request
-		return s.socks5.HandleRequest(request, s.transport)
+		adaptor = common.GetAdaptor(common.SOCKS5)
 	default:
-
+		adaptor = common.GetAdaptor(common.HTTP)
 	}
-	return nil
+
+	adaptor.HandleConn(ctx, bufConn, s.router)
 }
 
 func (s *Server) Stop() error {
-	s.running = false
-	s.SysProxy(false)
-	return s.listener.Close()
-}
-
-// SysProxy 开启/关闭系统代理
-func (s *Server) SysProxy(turnOn bool) {
-	if turnOn {
-		err := sysproxy.OnHTTP(s.listener.Addr().String())
-		if err != nil {
-			log.Println(err)
-		}
-	} else {
-		_ = sysproxy.OffHTTP()
+	if s.running {
+		s.running = false
+		// 关闭信号监听通道
+		signal.Stop(s.signals)
+		close(s.signals)
+		return s.listener.Close()
 	}
+	return nil
 }
