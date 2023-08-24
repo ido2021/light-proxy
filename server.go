@@ -2,8 +2,10 @@ package mixedproxy
 
 import (
 	"context"
+	"errors"
 	"github.com/ido2021/mixedproxy/common"
 	"github.com/ido2021/mixedproxy/socks"
+	"github.com/ido2021/sysproxy"
 	"log"
 	"net"
 	"os"
@@ -14,13 +16,14 @@ import (
 // Server is responsible for accepting connections and handling
 // the details of the SOCKS5 & http protocol
 type Server struct {
-	config    *Config
-	listener  net.Listener
-	running   bool
-	signals   chan os.Signal
-	transport common.Transport
-	socks5    *socks.Socks5Adaptor
-	router    *common.Router
+	config        *Config
+	listener      net.Listener
+	running       bool
+	signals       chan os.Signal
+	transport     common.Transport
+	socks5        *socks.Socks5Adaptor
+	router        *common.Router
+	clearSysProxy func() error
 }
 
 // New creates a new Server and potentially returns an error
@@ -81,6 +84,10 @@ func (s *Server) ListenAndServe(network, addr string) error {
 	s.running = true
 
 	go s.serve(l)
+
+	if s.config.SysProxy {
+		s.SetSysProxy()
+	}
 	s.waitOnExit()
 	return nil
 }
@@ -146,10 +153,33 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 func (s *Server) Stop() error {
 	if s.running {
 		s.running = false
+		s.ClearSysProxy()
 		// 关闭信号监听通道
 		signal.Stop(s.signals)
 		close(s.signals)
 		return s.listener.Close()
+	}
+	return nil
+}
+
+func (s *Server) SetSysProxy() error {
+	if !s.running {
+		return errors.New("代理未启动！")
+	}
+	port := s.listener.Addr().(*net.TCPAddr).Port
+	clearSysProxy, err := sysproxy.SetSystemProxy(uint16(port), true)
+	if err != nil {
+		return err
+	}
+	s.clearSysProxy = clearSysProxy
+	return nil
+}
+
+func (s *Server) ClearSysProxy() error {
+	if s.clearSysProxy != nil {
+		err := s.clearSysProxy()
+		s.clearSysProxy = nil
+		return err
 	}
 	return nil
 }

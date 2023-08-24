@@ -1,0 +1,4 @@
+github.com/ido2021/sysproxy v0.1.0 h1:NOGEFaug4B+Ms5tRVRo1J9q7sjwswtPCoMJxvi52f4w=
+github.com/ido2021/sysproxy v0.1.0/go.mod h1:pPDH3tkUTZ1E/xXkplaW9zMyNY8V5Ngej8vL/MleX9I=
+golang.org/x/sys v0.11.0 h1:eG7RXZHdqOJ1i+0lgLgCpSXAp6M3LYlAo6osgSi0xOM=
+golang.org/x/sys v0.11.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
