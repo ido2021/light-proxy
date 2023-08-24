@@ -50,14 +50,10 @@ func New(transport common.Transport, options ...Option) *Server {
 		}
 	}
 
-	// 缺省直连模式
-	if transport == nil {
-		transport = new(common.DirectTransport)
-	}
-
 	server := &Server{
 		config:    conf,
 		transport: transport,
+		router:    common.NewRouter(transport),
 		signals:   make(chan os.Signal),
 		socks5: &socks.Socks5Adaptor{
 			AuthMethods: make(map[uint8]socks.Authenticator),
@@ -153,7 +149,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 func (s *Server) Stop() error {
 	if s.running {
 		s.running = false
-		s.ClearSysProxy()
+		_ = s.ClearSysProxy()
 		// 关闭信号监听通道
 		signal.Stop(s.signals)
 		close(s.signals)
