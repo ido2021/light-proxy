@@ -19,7 +19,7 @@ type Server struct {
 	config        *Config
 	listener      net.Listener
 	running       bool
-	signals       chan os.Signal
+	closed        chan struct{}
 	transport     common.Transport
 	socks5        *socks.Socks5Adaptor
 	router        *common.Router
@@ -54,7 +54,7 @@ func New(transport common.Transport, options ...Option) *Server {
 		config:    conf,
 		transport: transport,
 		router:    common.NewRouter(transport),
-		signals:   make(chan os.Signal),
+		closed:    make(chan struct{}),
 		socks5: &socks.Socks5Adaptor{
 			AuthMethods: make(map[uint8]socks.Authenticator),
 		},
@@ -89,11 +89,15 @@ func (s *Server) ListenAndServe(network, addr string) error {
 }
 
 func (s *Server) waitOnExit() {
-	signal.Notify(s.signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	sig, ok := <-s.signals
-	if ok {
+	signals := make(chan os.Signal)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	select {
+	case sig := <-signals:
 		log.Printf("Got %s signal. Aborting...\n", sig)
 		_ = s.Stop()
+	case <-s.closed:
+		// 不再监听信号
+		signal.Stop(signals)
 	}
 }
 
@@ -150,9 +154,7 @@ func (s *Server) Stop() error {
 	if s.running {
 		s.running = false
 		_ = s.ClearSysProxy()
-		// 关闭信号监听通道
-		signal.Stop(s.signals)
-		close(s.signals)
+		s.closed <- struct{}{}
 		return s.listener.Close()
 	}
 	return nil
