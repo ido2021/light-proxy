@@ -2,7 +2,6 @@ package socks
 
 import (
 	"bytes"
-	"github.com/ido2021/mixedproxy"
 	"net"
 	"testing"
 )

@@ -2,7 +2,7 @@ package socks
 
 import (
 	"context"
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/common"
 )
 
 // RuleSet is used to provide custom rules to allow or prohibit actions

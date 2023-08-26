@@ -3,7 +3,7 @@ package socks
 import (
 	"errors"
 	"fmt"
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/common"
 	"io"
 	"net"
 )

@@ -2,8 +2,13 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/adaptor/inbound"
+	common2 "github.com/ido2021/light-proxy/adaptor/inbound/common"
+	"github.com/ido2021/light-proxy/common"
+	"github.com/ido2021/light-proxy/route"
 	"log"
 	"net"
 	"net/http"
@@ -11,13 +16,57 @@ import (
 )
 
 func init() {
-	common.RegisterAdaptors(common.HTTP, &HttpAdaptor{})
+	inbound.RegisterInAdaptorFactory(inbound.HTTP, NewHttpAdaptor)
+}
+
+type HttpConfig struct {
+	Address string          `json:"address"`
+	Users   []*common2.User `json:"users,omitempty"`
 }
 
 type HttpAdaptor struct {
+	conf     *HttpConfig
+	listener net.Listener
 }
 
-func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *common.Router) {
+func NewHttpAdaptor(config json.RawMessage) (inbound.InAdaptor, error) {
+	conf := &HttpConfig{}
+	err := json.Unmarshal(config, conf)
+	if err != nil {
+		return nil, err
+	}
+	return &HttpAdaptor{
+		conf: conf,
+	}, nil
+}
+
+func (h *HttpAdaptor) Stop() error {
+	return h.listener.Close()
+}
+
+func (h *HttpAdaptor) Start(router *route.Router) error {
+	l, err := net.Listen("tcp", h.conf.Address)
+	if err != nil {
+		return err
+	}
+	h.listener = l
+	for {
+		conn, err := h.listener.Accept()
+		if err != nil {
+			// 监听关闭了，退出
+			if errors.Is(err, net.ErrClosed) {
+				break
+			}
+			log.Println("获取连接异常：", err)
+			continue
+		}
+		ctx := context.Background()
+		go h.HandleConn(ctx, conn, router)
+	}
+	return nil
+}
+
+func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *route.Router) {
 	keepAlive := true
 	trusted := true // disable authenticate if cache is nil
 
@@ -42,28 +91,26 @@ func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *com
 		}
 
 		remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
-		req := &common.Request{
-			Protocol:   common.HTTP,
+		metadata := &common.Metadata{
 			RemoteAddr: &common.AddrSpec{IP: remoteAddr.IP, Port: remoteAddr.Port},
 			DestAddr:   parseHTTPAddr(request),
-			Conn:       bufConn,
 		}
 
-		transport := router.RouteBy(req)
-		if req.DestAddr.IP == nil {
-			ip, err := transport.Resolve(ctx, req.DestAddr.FQDN)
+		outAdaptor := router.Route(metadata)
+		if metadata.DestAddr.IP == nil {
+			ip, err := outAdaptor.Resolve(ctx, metadata.DestAddr.FQDN)
 			if err != nil {
 				log.Println(err)
 				resp = responseWith(request, http.StatusBadGateway)
 				err = resp.Write(bufConn)
 				return
 			}
-			req.DestAddr.IP = ip
+			metadata.DestAddr.IP = ip
 		}
 
 		if trusted {
 			// Attempt to connect
-			target, err := transport.Dial(ctx, "tcp", req.DestAddr.Address())
+			target, err := outAdaptor.Dial(ctx, "tcp", metadata.DestAddr.Address())
 			if err != nil {
 				log.Println(err)
 				return
@@ -78,7 +125,7 @@ func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *com
 				}
 
 				// 无脑转发
-				common.Relay(target, req.Conn)
+				common.Relay(target, conn)
 				return
 			}
 
@@ -101,7 +148,7 @@ func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *com
 			if request.URL.Scheme == "" || request.URL.Host == "" {
 				resp = responseWith(request, http.StatusBadRequest)
 			} else {
-				client := newClient(transport.Dial)
+				client := newClient(outAdaptor.Dial)
 				defer client.CloseIdleConnections()
 				resp, err = client.Do(request)
 				if err != nil {

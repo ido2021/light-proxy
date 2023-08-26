@@ -1,16 +1,17 @@
 package main
 
 import (
-	"github.com/ido2021/mixedproxy"
-	"github.com/ido2021/mixedproxy/common"
+	light_proxy "github.com/ido2021/light-proxy"
 	"log"
 )
 
 func main() {
-	server := mixedproxy.New(new(common.DirectTransport))
-	err := server.ListenAndServe("tcp", "127.0.0.1:8086")
+	server, err := light_proxy.New("cmd/wireguard.json")
 	if err != nil {
-		log.Println(err)
-		return
+		log.Fatal(err)
+	}
+	err = server.Start()
+	if err != nil {
+		log.Fatal(err)
 	}
 }

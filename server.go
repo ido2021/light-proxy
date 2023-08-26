@@ -1,13 +1,13 @@
-package mixedproxy
+package light_proxy
 
 import (
-	"context"
+	"encoding/json"
 	"errors"
-	"github.com/ido2021/mixedproxy/common"
-	"github.com/ido2021/mixedproxy/socks"
-	"github.com/ido2021/sysproxy"
+	"github.com/ido2021/light-proxy/adaptor/inbound"
+	"github.com/ido2021/light-proxy/adaptor/outbound"
+	"github.com/ido2021/light-proxy/common"
+	"github.com/ido2021/light-proxy/route"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,73 +16,77 @@ import (
 // Server is responsible for accepting connections and handling
 // the details of the SOCKS5 & http protocol
 type Server struct {
-	config        *Config
-	listener      net.Listener
-	running       bool
-	closed        chan struct{}
-	transport     common.Transport
-	socks5        *socks.Socks5Adaptor
-	router        *common.Router
-	clearSysProxy func() error
+	config          *common.Config
+	inboundAdaptors []inbound.InAdaptor
+	running         bool
+	closed          chan struct{}
+	router          *route.Router
 }
 
 // New creates a new Server and potentially returns an error
-func New(transport common.Transport, options ...Option) *Server {
-	conf := &Config{
-		AuthMethods: nil,
-		Credentials: nil,
-		Rules:       nil,
-		Rewriter:    nil,
-		BindIP:      nil,
-		Logger:      log.New(os.Stdout, "", log.LstdFlags),
+func New(confPath string) (*Server, error) {
+	data, err := os.ReadFile(confPath)
+	if err != nil {
+		return nil, err
+	}
+	config := &common.Config{}
+	err = json.Unmarshal(data, config)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, option := range options {
-		option(conf)
-	}
-
-	// Ensure we have at least one authentication method enabled
-	if len(conf.AuthMethods) == 0 {
-		if conf.Credentials != nil {
-			conf.AuthMethods = []socks.Authenticator{&socks.UserPassAuthenticator{conf.Credentials}}
-		} else {
-			conf.AuthMethods = []socks.Authenticator{&socks.NoAuthAuthenticator{}}
+	var adaptors []inbound.InAdaptor
+	for _, l := range config.Listeners {
+		factory := inbound.GetInAdaptorFactory(inbound.Protocol(l.Type))
+		if factory == nil {
+			return nil, errors.New("不支持的协议: " + l.Type)
 		}
+		adaptor, err := factory(l.Config)
+		if err != nil {
+			return nil, err
+		}
+		adaptors = append(adaptors, adaptor)
 	}
 
+	// 默认接出
+	outAdaptors := map[string]outbound.OutAdaptor{
+		outbound.Direct: &outbound.DirectOutAdaptor{},
+		outbound.Block:  &outbound.BlockOutAdaptor{},
+	}
+
+	factory := outbound.GetOutAdaptorFactory(config.Proxy.Type)
+	if factory != nil {
+		outAdaptor, err := factory(config.Proxy.Config)
+		if err != nil {
+			return nil, err
+		}
+		outAdaptors[outbound.Proxy] = outAdaptor
+	}
+
+	router, err := route.NewRouter(config.Route, outAdaptors)
+	if err != nil {
+		return nil, err
+	}
 	server := &Server{
-		config:    conf,
-		transport: transport,
-		router:    common.NewRouter(transport),
-		closed:    make(chan struct{}),
-		socks5: &socks.Socks5Adaptor{
-			AuthMethods: make(map[uint8]socks.Authenticator),
-		},
+		config:          config,
+		inboundAdaptors: adaptors,
+		router:          router,
+		closed:          make(chan struct{}),
 	}
 
-	for _, a := range conf.AuthMethods {
-		server.socks5.AuthMethods[a.GetCode()] = a
-	}
-
-	return server
+	return server, nil
 }
 
-// ListenAndServe is used to create a listener and serve on it
-func (s *Server) ListenAndServe(network, addr string) error {
+// Start is used to create a listener and serve on it
+func (s *Server) Start() error {
 	if s.running {
 		return nil
 	}
-	l, err := net.Listen(network, addr)
-	if err != nil {
-		return err
-	}
-	s.listener = l
-	s.running = true
-
-	go s.serve(l)
-
-	if s.config.SysProxy {
-		s.SetSysProxy()
+	for _, adaptor := range s.inboundAdaptors {
+		go func() {
+			err := adaptor.Start(s.router)
+			log.Println(err)
+		}()
 	}
 	s.waitOnExit()
 	return nil
@@ -101,83 +105,16 @@ func (s *Server) waitOnExit() {
 	}
 }
 
-// serve is used to serve connections from a listener
-func (s *Server) serve(l net.Listener) {
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			if !s.running {
-				break
-			}
-			log.Println("获取连接异常：", err)
-			continue
-		}
-		ctx := context.Background()
-		go s.handleConn(ctx, conn)
-	}
-}
-
-// ServeConn is used to serve a single connection.
-func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	defer func() {
-		// 捕获Panic
-		if err := recover(); err != nil {
-			log.Println(err)
-		}
-		_ = conn.Close()
-	}()
-
-	conn.(*net.TCPConn).SetKeepAlive(true)
-
-	bufConn := common.NewBufferedConn(conn)
-	// Read the version byte
-	version, err := bufConn.Peek(1)
-	if err != nil {
-		s.config.Logger.Printf("[ERR] socks: Failed to get version byte: %v", err)
-		return
-	}
-
-	var adaptor common.Adaptor
-	switch version[0] {
-	case socks.Socks4Version:
-		adaptor = common.GetAdaptor(common.SOCKS4)
-	case socks.Socks5Version:
-		adaptor = common.GetAdaptor(common.SOCKS5)
-	default:
-		adaptor = common.GetAdaptor(common.HTTP)
-	}
-
-	adaptor.HandleConn(ctx, bufConn, s.router)
-}
-
 func (s *Server) Stop() error {
 	if s.running {
 		s.running = false
-		_ = s.ClearSysProxy()
 		s.closed <- struct{}{}
-		return s.listener.Close()
-	}
-	return nil
-}
-
-func (s *Server) SetSysProxy() error {
-	if !s.running {
-		return errors.New("代理未启动！")
-	}
-	port := s.listener.Addr().(*net.TCPAddr).Port
-	clearSysProxy, err := sysproxy.SetSystemProxy(uint16(port), true)
-	if err != nil {
-		return err
-	}
-	s.clearSysProxy = clearSysProxy
-	return nil
-}
-
-func (s *Server) ClearSysProxy() error {
-	if s.clearSysProxy != nil {
-		err := s.clearSysProxy()
-		s.clearSysProxy = nil
-		return err
+		for _, adaptor := range s.inboundAdaptors {
+			err := adaptor.Stop()
+			if err != nil {
+				log.Println(err)
+			}
+		}
 	}
 	return nil
 }

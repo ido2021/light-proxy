@@ -1,7 +1,7 @@
 package http
 
 import (
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/common"
 	"net"
 	"net/http"
 	"strings"

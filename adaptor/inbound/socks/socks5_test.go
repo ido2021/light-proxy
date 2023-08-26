@@ -3,7 +3,6 @@ package socks
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/ido2021/mixedproxy"
 	"io"
 	"net"
 	"testing"

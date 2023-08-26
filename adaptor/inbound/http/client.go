@@ -1,12 +1,12 @@
 package http
 
 import (
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/adaptor/outbound"
 	"net/http"
 	"time"
 )
 
-func newClient(dial common.DialOut) *http.Client {
+func newClient(dial outbound.DialOut) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			// from http.DefaultTransport

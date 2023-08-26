@@ -1,13 +1,13 @@
-package mixedproxy
+package light_proxy
 
 import (
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/common"
 	"testing"
 	"time"
 )
 
 func TestProxy(t *testing.T) {
-	server := New(new(common.DirectTransport))
+	server := New(new(common.Direct))
 	err := server.ListenAndServe("tcp", "127.0.0.1:8086")
 	if err != nil {
 		t.Fatal(err)

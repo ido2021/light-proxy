@@ -2,9 +2,14 @@ package socks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ido2021/mixedproxy/common"
+	"github.com/ido2021/light-proxy/adaptor/inbound"
+	common2 "github.com/ido2021/light-proxy/adaptor/inbound/common"
+	"github.com/ido2021/light-proxy/adaptor/outbound"
+	"github.com/ido2021/light-proxy/common"
+	"github.com/ido2021/light-proxy/route"
 	"io"
 	"log"
 	"net"
@@ -45,27 +50,79 @@ var (
 )
 
 func init() {
-	common.RegisterAdaptors(common.SOCKS5, &Socks5Adaptor{
-		AuthMethods: map[uint8]Authenticator{NoAuth: &NoAuthAuthenticator{}},
-	})
+	// 注册mixed factory
+	inbound.RegisterInAdaptorFactory(inbound.SOCKS5, NewSocks5Adaptor)
 }
 
-type Socks5Adaptor struct {
+type socksRequest struct {
+	metadata *common.Metadata
+	cmd      byte
+	auth     *common.AuthContext
+}
+
+type Sockcs5Config struct {
+	Address string          `json:"address"`
+	Users   []*common2.User `json:"users,omitempty"`
+}
+
+type Socks5InAdaptor struct {
+	conf        *Sockcs5Config
+	listener    net.Listener
 	AuthMethods map[uint8]Authenticator
 }
 
-func (s5 *Socks5Adaptor) HandleConn(ctx context.Context, conn net.Conn, router *common.Router) {
-	request, err := s5.receiveRequest(ctx, conn)
+func NewSocks5Adaptor(config json.RawMessage) (inbound.InAdaptor, error) {
+	conf := &Sockcs5Config{}
+	err := json.Unmarshal(config, conf)
+	if err != nil {
+		return nil, err
+	}
+	return &Socks5InAdaptor{
+		conf: conf,
+		AuthMethods: map[uint8]Authenticator{
+			NoAuth: &NoAuthAuthenticator{},
+		},
+	}, nil
+}
+
+func (s5 *Socks5InAdaptor) Stop() error {
+	return s5.listener.Close()
+}
+
+func (s5 *Socks5InAdaptor) Start(router *route.Router) error {
+	l, err := net.Listen("tcp", s5.conf.Address)
+	if err != nil {
+		return err
+	}
+	s5.listener = l
+	for {
+		conn, err := s5.listener.Accept()
+		if err != nil {
+			// 监听关闭了，退出
+			if errors.Is(err, net.ErrClosed) {
+				break
+			}
+			log.Println("获取连接异常：", err)
+			continue
+		}
+		ctx := context.Background()
+		go s5.HandleConn(ctx, conn, router)
+	}
+	return nil
+}
+
+func (s5 *Socks5InAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *route.Router) {
+	request, err := s5.handshake(conn)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	transport := router.RouteBy(request)
+	outAdaptor := router.Route(request.metadata)
 	// Resolve the address if we have a FQDN
-	dest := request.DestAddr
+	dest := request.metadata.DestAddr
 	if dest.FQDN != "" && dest.IP == nil {
-		addr, err := transport.Resolve(ctx, dest.FQDN)
+		addr, err := outAdaptor.Resolve(ctx, dest.FQDN)
 		if err != nil {
 			_ = sendReply(conn, hostUnreachable, nil)
 			return
@@ -73,15 +130,15 @@ func (s5 *Socks5Adaptor) HandleConn(ctx context.Context, conn net.Conn, router *
 		dest.IP = addr
 	}
 
-	err = s5.forwardRequest(ctx, request, transport.Dial)
+	err = s5.forwardRequest(ctx, conn, request, outAdaptor.Dial)
 	if err != nil {
 		log.Println(err)
 	}
 }
 
-func (s5 *Socks5Adaptor) receiveRequest(ctx context.Context, conn net.Conn) (*common.Request, error) {
+func (s5 *Socks5InAdaptor) handshake(conn net.Conn) (*socksRequest, error) {
 	// Authenticate the connection
-	authContext, err := s5.authenticate(conn)
+	auth, err := s5.authenticate(conn)
 	if err != nil {
 		err = fmt.Errorf("failed to authenticate: %v", err)
 		return nil, err
@@ -114,23 +171,22 @@ func (s5 *Socks5Adaptor) receiveRequest(ctx context.Context, conn net.Conn) (*co
 		}
 	*/
 
-	request := &common.Request{
-		Protocol:    Socks5Version,
-		DestAddr:    dest,
-		Conn:        conn,
-		AuthContext: authContext,
-		Metadata:    map[string]interface{}{"SOCKS5_COMMAND": header[1]},
+	request := &socksRequest{
+		cmd: header[1],
+		metadata: &common.Metadata{
+			DestAddr: dest,
+		},
+		auth: auth,
 	}
 	if client, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
-		request.RemoteAddr = &common.AddrSpec{IP: client.IP, Port: client.Port}
+		request.metadata.RemoteAddr = &common.AddrSpec{IP: client.IP, Port: client.Port}
 	}
 
 	return request, nil
-
 }
 
 // authenticate is used to handle connection authentication
-func (s5 *Socks5Adaptor) authenticate(rw net.Conn) (*common.AuthContext, error) {
+func (s5 *Socks5InAdaptor) authenticate(rw net.Conn) (*common.AuthContext, error) {
 	// Read RFC 1928 for request and reply structure and sizes.
 	buf := make([]byte, MaxAddrLen)
 	// read VER, NMETHODS, METHODS
@@ -156,28 +212,27 @@ func (s5 *Socks5Adaptor) authenticate(rw net.Conn) (*common.AuthContext, error) 
 }
 
 // forwardRequest 转发请求
-func (s5 *Socks5Adaptor) forwardRequest(ctx context.Context, req *common.Request, dialOut common.DialOut) error {
-	cmd := req.Metadata["SOCKS5_COMMAND"].(byte)
+func (s5 *Socks5InAdaptor) forwardRequest(ctx context.Context, conn net.Conn, req *socksRequest, dialOut outbound.DialOut) error {
 	// Switch on the command
-	switch cmd {
+	switch req.cmd {
 	case ConnectCommand:
-		return s5.handleConnect(ctx, req, dialOut)
+		return s5.handleConnect(ctx, conn, req.metadata, dialOut)
 	case BindCommand:
-		return s5.handleBind(ctx, req)
+		return s5.handleBind(ctx, conn, req.metadata)
 	case AssociateCommand:
-		return s5.handleAssociate(ctx, req)
+		return s5.handleAssociate(ctx, conn, req.metadata)
 	default:
-		if err := sendReply(req.Conn, commandNotSupported, nil); err != nil {
+		if err := sendReply(conn, commandNotSupported, nil); err != nil {
 			return fmt.Errorf("Failed to send reply: %v", err)
 		}
-		return fmt.Errorf("Unsupported command: %v", cmd)
+		return fmt.Errorf("unsupported command: %v", req.cmd)
 	}
 }
 
 // handleConnect is used to handle a connect command
-func (s5 *Socks5Adaptor) handleConnect(ctx context.Context, req *common.Request, dialOut common.DialOut) error {
+func (s5 *Socks5InAdaptor) handleConnect(ctx context.Context, conn net.Conn, metadata *common.Metadata, dialOut outbound.DialOut) error {
 	// Attempt to connect
-	target, err := dialOut(ctx, "tcp", req.DestAddr.Address())
+	target, err := dialOut(ctx, "tcp", metadata.DestAddr.Address())
 	if err != nil {
 		msg := err.Error()
 		resp := hostUnreachable
@@ -186,21 +241,21 @@ func (s5 *Socks5Adaptor) handleConnect(ctx context.Context, req *common.Request,
 		} else if strings.Contains(msg, "network is unreachable") {
 			resp = networkUnreachable
 		}
-		if err := sendReply(req.Conn, resp, nil); err != nil {
+		if err := sendReply(conn, resp, nil); err != nil {
 			return fmt.Errorf("Failed to send reply: %v", err)
 		}
-		return fmt.Errorf("Connect to %v failed: %v", req.DestAddr, err)
+		return fmt.Errorf("Connect to %v failed: %v", metadata.DestAddr, err)
 	}
 	defer target.Close()
 
 	// Send success
 	local := target.LocalAddr().(*net.TCPAddr)
 	bind := common.AddrSpec{IP: local.IP, Port: local.Port}
-	if err := sendReply(req.Conn, successReply, &bind); err != nil {
+	if err := sendReply(conn, successReply, &bind); err != nil {
 		return fmt.Errorf("Failed to send reply: %v", err)
 	}
 
-	common.Relay(target, req.Conn)
+	common.Relay(target, conn)
 
 	//// ListenAndServe proxying
 	//errCh := make(chan error, 2)
@@ -219,18 +274,18 @@ func (s5 *Socks5Adaptor) handleConnect(ctx context.Context, req *common.Request,
 }
 
 // handleBind is used to handle a connect command
-func (s5 *Socks5Adaptor) handleBind(ctx context.Context, req *common.Request) error {
+func (s5 *Socks5InAdaptor) handleBind(ctx context.Context, conn net.Conn, metadata *common.Metadata) error {
 	// TODO: Support bind
-	if err := sendReply(req.Conn, commandNotSupported, nil); err != nil {
+	if err := sendReply(conn, commandNotSupported, nil); err != nil {
 		return fmt.Errorf("Failed to send reply: %v", err)
 	}
 	return nil
 }
 
 // handleAssociate is used to handle a connect command
-func (s5 *Socks5Adaptor) handleAssociate(ctx context.Context, req *common.Request) error {
+func (s5 *Socks5InAdaptor) handleAssociate(ctx context.Context, conn net.Conn, metadata *common.Metadata) error {
 	// TODO: Support associate
-	if err := sendReply(req.Conn, commandNotSupported, nil); err != nil {
+	if err := sendReply(conn, commandNotSupported, nil); err != nil {
 		return fmt.Errorf("Failed to send reply: %v", err)
 	}
 	return nil
