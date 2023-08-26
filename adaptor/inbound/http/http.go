@@ -67,6 +67,13 @@ func (h *HttpAdaptor) Start(router *route.Router) error {
 }
 
 func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *route.Router) {
+	var client *http.Client
+	defer func() {
+		if client != nil {
+			client.CloseIdleConnections()
+		}
+	}()
+
 	keepAlive := true
 	trusted := true // disable authenticate if cache is nil
 
@@ -148,8 +155,9 @@ func (h *HttpAdaptor) HandleConn(ctx context.Context, conn net.Conn, router *rou
 			if request.URL.Scheme == "" || request.URL.Host == "" {
 				resp = responseWith(request, http.StatusBadRequest)
 			} else {
-				client := newClient(outAdaptor.Dial)
-				defer client.CloseIdleConnections()
+				if client == nil {
+					client = newClient(outAdaptor.Dial)
+				}
 				resp, err = client.Do(request)
 				if err != nil {
 					resp = responseWith(request, http.StatusBadGateway)

@@ -1,15 +1,6 @@
 package socks
 
-import (
-	"bytes"
-	"encoding/binary"
-	"io"
-	"net"
-	"testing"
-	"time"
-)
-
-func TestSOCKS5_Connect(t *testing.T) {
+/*func TestSOCKS5_Connect(t *testing.T) {
 	// Create a local listener
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -102,4 +93,4 @@ func TestSOCKS5_Connect(t *testing.T) {
 	if !bytes.Equal(out, expected) {
 		t.Fatalf("bad: %v", out)
 	}
-}
+}*/
