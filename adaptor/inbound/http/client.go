@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func newClient(dial outbound.DialOut) *http.Client {
+func newClient(dial outbound.Dial) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			// from http.DefaultTransport

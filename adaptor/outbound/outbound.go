@@ -12,12 +12,14 @@ const (
 	Proxy  = "proxy"
 )
 
-type DialOut func(ctx context.Context, network, addr string) (net.Conn, error)
+type Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 
 type OutAdaptor interface {
 	Dial(ctx context.Context, network, addr string) (net.Conn, error)
 	// Resolve can be provided to do custom name resolution.
 	Resolve(ctx context.Context, name string) (net.IP, error)
+	LookupHost(ctx context.Context, host string) (addrs []string, err error)
+	Close() error
 }
 
 type Factory func(config json.RawMessage) (OutAdaptor, error)
@@ -35,27 +37,37 @@ func GetOutAdaptorFactory(protocol string) Factory {
 type DirectOutAdaptor struct {
 }
 
+func (d *DirectOutAdaptor) LookupHost(ctx context.Context, host string) (addrs []string, err error) {
+	return net.LookupHost(host)
+}
+
+func (d *DirectOutAdaptor) Close() error {
+	return nil
+}
+
 func (d *DirectOutAdaptor) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	return net.Dial(network, addr)
 }
 
 func (d *DirectOutAdaptor) Resolve(ctx context.Context, name string) (net.IP, error) {
-	addr, err := net.ResolveIPAddr("ip", name)
-	if err != nil {
-		return nil, err
-	}
-	return addr.IP, err
+	return nil, nil
 }
 
 type BlockOutAdaptor struct {
 }
 
+func (b *BlockOutAdaptor) LookupHost(ctx context.Context, host string) (addrs []string, err error) {
+	return nil, nil
+}
+
+func (b *BlockOutAdaptor) Close() error {
+	return nil
+}
+
 func (b *BlockOutAdaptor) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (b *BlockOutAdaptor) Resolve(ctx context.Context, name string) (net.IP, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }

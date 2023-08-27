@@ -212,7 +212,7 @@ func (s5 *Socks5InAdaptor) authenticate(rw net.Conn) (*common.AuthContext, error
 }
 
 // forwardRequest 转发请求
-func (s5 *Socks5InAdaptor) forwardRequest(ctx context.Context, conn net.Conn, req *socksRequest, dialOut outbound.DialOut) error {
+func (s5 *Socks5InAdaptor) forwardRequest(ctx context.Context, conn net.Conn, req *socksRequest, dialOut outbound.Dial) error {
 	// Switch on the command
 	switch req.cmd {
 	case ConnectCommand:
@@ -230,7 +230,7 @@ func (s5 *Socks5InAdaptor) forwardRequest(ctx context.Context, conn net.Conn, re
 }
 
 // handleConnect is used to handle a connect command
-func (s5 *Socks5InAdaptor) handleConnect(ctx context.Context, conn net.Conn, metadata *common.Metadata, dialOut outbound.DialOut) error {
+func (s5 *Socks5InAdaptor) handleConnect(ctx context.Context, conn net.Conn, metadata *common.Metadata, dialOut outbound.Dial) error {
 	// Attempt to connect
 	target, err := dialOut(ctx, "tcp", metadata.DestAddr.Address())
 	if err != nil {

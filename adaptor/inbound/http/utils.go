@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// removeHopByHopHeaders remove Proxy-* headers
+// removeHopByHopHeaders remove Outbound-* headers
 func removeProxyHeaders(header http.Header) {
 	header.Del("Proxy-Connection")
 	header.Del("Proxy-Authenticate")
@@ -56,7 +56,7 @@ func removeExtraHTTPHostPort(req *http.Request) {
 	req.URL.Host = host
 }
 
-// parseBasicProxyAuthorization parse header Proxy-Authorization and return base64-encoded credential
+// parseBasicProxyAuthorization parse header Outbound-Authorization and return base64-encoded credential
 func parseBasicProxyAuthorization(request *http.Request) string {
 	value := request.Header.Get("Proxy-Authorization")
 	if !strings.HasPrefix(value, "Basic ") {

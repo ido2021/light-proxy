@@ -3,10 +3,8 @@ package wireguard
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/ido2021/light-proxy/adaptor/outbound"
-	"math/rand"
 	"net"
 	"net/netip"
 	"strings"
@@ -39,8 +37,9 @@ type WireGuardConfig struct {
 }
 
 type WireGuardOutAdaptor struct {
-	Tnet      *netstack.Net
-	SystemDNS bool
+	net       *netstack.Net
+	device    *device.Device
+	systemDNS bool
 }
 
 func NewWireGuardOutAdaptor(config json.RawMessage) (outbound.OutAdaptor, error) {
@@ -52,46 +51,21 @@ func NewWireGuardOutAdaptor(config json.RawMessage) (outbound.OutAdaptor, error)
 	return StartWireguard(conf, device.LogLevelError)
 }
 
-func (w *WireGuardOutAdaptor) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	return w.Tnet.DialContext(ctx, network, addr)
+func (wg *WireGuardOutAdaptor) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	return wg.net.DialContext(ctx, network, addr)
 }
 
-func (w *WireGuardOutAdaptor) LookupAddr(ctx context.Context, name string) ([]string, error) {
-	if w.SystemDNS {
-		return net.DefaultResolver.LookupHost(ctx, name)
-	} else {
-		return w.Tnet.LookupContextHost(ctx, name)
-	}
+func (wg *WireGuardOutAdaptor) LookupHost(ctx context.Context, host string) (addrs []string, err error) {
+	return wg.net.LookupContextHost(ctx, host)
 }
 
-func (w *WireGuardOutAdaptor) Resolve(ctx context.Context, name string) (net.IP, error) {
-	addrs, err := w.LookupAddr(ctx, name)
-	if err != nil {
-		return nil, err
-	}
+func (wg *WireGuardOutAdaptor) Resolve(ctx context.Context, name string) (net.IP, error) {
+	return nil, nil
+}
 
-	size := len(addrs)
-	if size == 0 {
-		return nil, errors.New("no address found for: " + name)
-	}
-
-	rand.Shuffle(size, func(i, j int) {
-		addrs[i], addrs[j] = addrs[j], addrs[i]
-	})
-
-	var addr netip.Addr
-	for _, saddr := range addrs {
-		addr, err = netip.ParseAddr(saddr)
-		if err == nil {
-			break
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return addr.AsSlice(), nil
+func (wg *WireGuardOutAdaptor) Close() error {
+	wg.device.Close()
+	return nil
 }
 
 // DeviceSetting contains the parameters for setting up a tun interface
@@ -181,7 +155,8 @@ func StartWireguard(conf *WireGuardConfig, logLevel int) (outbound.OutAdaptor, e
 	}
 
 	return &WireGuardOutAdaptor{
-		Tnet:      tnet,
-		SystemDNS: len(setting.dns) == 0,
+		net:       tnet,
+		systemDNS: len(setting.dns) == 0,
+		device:    dev,
 	}, nil
 }

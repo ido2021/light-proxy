@@ -189,7 +189,7 @@ func authenticate(request *http.Request) *http.Response {
 			credential := parseBasicProxyAuthorization(request)
 			if credential == "" {
 				resp := responseWith(request, http.StatusProxyAuthRequired)
-				resp.Header.Set("Proxy-Authenticate", "Basic")
+				resp.Header.Set("Outbound-Authenticate", "Basic")
 				return resp
 			}
 

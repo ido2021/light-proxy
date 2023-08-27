@@ -4,19 +4,15 @@ import "encoding/json"
 
 // Config is used to setup and configure a Server
 type Config struct {
-	Listeners []Listener `json:"listeners"`
-	Route     Route      `json:"route,omitempty"`
-	Proxy     *Proxy     `json:"proxy,omitempty"`
-	Log       Log        `json:"log,omitempty"`
+	Inbounds []Inbound `json:"inbounds"`
+	Route    Route     `json:"route,omitempty"`
+	Outbound *Outbound `json:"outbound,omitempty"`
+	Log      Log       `json:"log,omitempty"`
 }
 
-type Listener struct {
+type Inbound struct {
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
-}
-
-type ListenerConfig interface {
-	IsListenerConfig()
 }
 
 type Route struct {
@@ -31,13 +27,9 @@ type Rule struct {
 	Outbound     string   `json:"outbound"`
 }
 
-type Proxy struct {
+type Outbound struct {
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
-}
-
-type ProxyConfig interface {
-	IsProxyConfig()
 }
 
 type Log struct {

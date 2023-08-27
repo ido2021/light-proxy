@@ -36,7 +36,7 @@ func New(confPath string) (*Server, error) {
 	}
 
 	var adaptors []inbound.InAdaptor
-	for _, l := range config.Listeners {
+	for _, l := range config.Inbounds {
 		factory := inbound.GetInAdaptorFactory(inbound.Protocol(l.Type))
 		if factory == nil {
 			return nil, errors.New("不支持的协议: " + l.Type)
@@ -50,17 +50,17 @@ func New(confPath string) (*Server, error) {
 
 	// 默认接出
 	outAdaptors := map[string]outbound.OutAdaptor{
-		outbound.Direct: &outbound.DirectOutAdaptor{},
+		outbound.Direct: NewDNSCacheOutAdaptor(&outbound.DirectOutAdaptor{}),
 		outbound.Block:  &outbound.BlockOutAdaptor{},
 	}
 
-	factory := outbound.GetOutAdaptorFactory(config.Proxy.Type)
+	factory := outbound.GetOutAdaptorFactory(config.Outbound.Type)
 	if factory != nil {
-		outAdaptor, err := factory(config.Proxy.Config)
+		outAdaptor, err := factory(config.Outbound.Config)
 		if err != nil {
 			return nil, err
 		}
-		outAdaptors[outbound.Proxy] = outAdaptor
+		outAdaptors[outbound.Proxy] = NewDNSCacheOutAdaptor(outAdaptor)
 	}
 
 	router, err := route.NewRouter(config.Route, outAdaptors)
