@@ -16,8 +16,6 @@ type Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 
 type OutAdaptor interface {
 	Dial(ctx context.Context, network, addr string) (net.Conn, error)
-	// Resolve can be provided to do custom name resolution.
-	Resolve(ctx context.Context, name string) (net.IP, error)
 	LookupHost(ctx context.Context, host string) (addrs []string, err error)
 	Close() error
 }
@@ -49,10 +47,6 @@ func (d *DirectOutAdaptor) Dial(ctx context.Context, network, addr string) (net.
 	return net.Dial(network, addr)
 }
 
-func (d *DirectOutAdaptor) Resolve(ctx context.Context, name string) (net.IP, error) {
-	return nil, nil
-}
-
 type BlockOutAdaptor struct {
 }
 
@@ -65,9 +59,5 @@ func (b *BlockOutAdaptor) Close() error {
 }
 
 func (b *BlockOutAdaptor) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	return nil, nil
-}
-
-func (b *BlockOutAdaptor) Resolve(ctx context.Context, name string) (net.IP, error) {
 	return nil, nil
 }

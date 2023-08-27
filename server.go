@@ -21,6 +21,7 @@ type Server struct {
 	running         bool
 	closed          chan struct{}
 	router          *route.Router
+	outAdaptors     map[string]*outbound.WrapperOutAdaptor
 }
 
 // New creates a new Server and potentially returns an error
@@ -49,9 +50,9 @@ func New(confPath string) (*Server, error) {
 	}
 
 	// 默认接出
-	outAdaptors := map[string]outbound.OutAdaptor{
-		outbound.Direct: NewDNSCacheOutAdaptor(&outbound.DirectOutAdaptor{}),
-		outbound.Block:  &outbound.BlockOutAdaptor{},
+	outAdaptors := map[string]*outbound.WrapperOutAdaptor{
+		outbound.Direct: outbound.NewWrapperOutAdaptor(&outbound.DirectOutAdaptor{}),
+		outbound.Block:  outbound.NewWrapperOutAdaptor(&outbound.BlockOutAdaptor{}),
 	}
 
 	factory := outbound.GetOutAdaptorFactory(config.Outbound.Type)
@@ -60,7 +61,7 @@ func New(confPath string) (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		outAdaptors[outbound.Proxy] = NewDNSCacheOutAdaptor(outAdaptor)
+		outAdaptors[outbound.Proxy] = outbound.NewWrapperOutAdaptor(outAdaptor)
 	}
 
 	router, err := route.NewRouter(config.Route, outAdaptors)
@@ -70,6 +71,7 @@ func New(confPath string) (*Server, error) {
 	server := &Server{
 		config:          config,
 		inboundAdaptors: adaptors,
+		outAdaptors:     outAdaptors,
 		router:          router,
 		closed:          make(chan struct{}),
 	}
@@ -111,6 +113,12 @@ func (s *Server) Stop() error {
 		s.closed <- struct{}{}
 		for _, adaptor := range s.inboundAdaptors {
 			err := adaptor.Stop()
+			if err != nil {
+				log.Println(err)
+			}
+		}
+		for _, adaptor := range s.outAdaptors {
+			err := adaptor.Close()
 			if err != nil {
 				log.Println(err)
 			}

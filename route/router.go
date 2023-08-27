@@ -11,7 +11,7 @@ type Rule struct {
 	domains        map[string]struct{}
 	domainSuffixes []string
 	domainPath     string
-	outAdaptor     outbound.OutAdaptor
+	outAdaptor     *outbound.WrapperOutAdaptor
 }
 
 func (r *Rule) Match(metadata *common.Metadata) bool {
@@ -30,10 +30,10 @@ func (r *Rule) Match(metadata *common.Metadata) bool {
 
 type Router struct {
 	rules []*Rule
-	final outbound.OutAdaptor
+	final *outbound.WrapperOutAdaptor
 }
 
-func NewRouter(route common.Route, outAdaptors map[string]outbound.OutAdaptor) (*Router, error) {
+func NewRouter(route common.Route, outAdaptors map[string]*outbound.WrapperOutAdaptor) (*Router, error) {
 	var rules []*Rule
 	for _, ruleConfig := range route.Rules {
 		outAdaptor, exist := outAdaptors[ruleConfig.Outbound]
@@ -69,7 +69,7 @@ func NewRouter(route common.Route, outAdaptors map[string]outbound.OutAdaptor) (
 	}, nil
 }
 
-func (r *Router) Route(metadata *common.Metadata) outbound.OutAdaptor {
+func (r *Router) Route(metadata *common.Metadata) *outbound.WrapperOutAdaptor {
 	for _, rule := range r.rules {
 		if rule.Match(metadata) {
 			return rule.outAdaptor
